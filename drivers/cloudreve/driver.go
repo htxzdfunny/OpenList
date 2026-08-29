@@ -30,11 +30,10 @@ func (d *Cloudreve) GetAddition() driver.Additional {
 }
 
 func (d *Cloudreve) Init(ctx context.Context) error {
+	d.Address = strings.TrimSuffix(d.Address, "/")
 	if d.Cookie != "" {
 		return nil
 	}
-	// removing trailing slash
-	d.Address = strings.TrimSuffix(d.Address, "/")
 	return d.login()
 }
 

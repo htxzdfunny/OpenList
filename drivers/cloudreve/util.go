@@ -47,6 +47,8 @@ func (d *Cloudreve) request(method string, path string, callback base.ReqCallbac
 		"Cookie":     "cloudreve-session=" + d.Cookie,
 		"Accept":     "application/json, text/plain, */*",
 		"User-Agent": d.getUA(),
+		"Origin":     d.Address,
+		"Referer":    d.Address + "/",
 	})
 
 	var r Resp
