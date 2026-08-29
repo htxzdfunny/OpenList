@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -26,7 +28,9 @@ const (
 	callbackAPI = "/bbs/app/api/qcloud/cos/upload/callback/v2"
 )
 
-func (d *HeyboxChat) queryParams() map[string]string {
+func (d *HeyboxChat) queryParams(apiPath string) map[string]string {
+	ts := time.Now().Unix()
+	nonce := createNonce(ts)
 	return map[string]string{
 		"heybox_id":     d.HeyboxID,
 		"pkey":          d.Pkey,
@@ -38,6 +42,9 @@ func (d *HeyboxChat) queryParams() map[string]string {
 		"web_version":   "1.0.0",
 		"chat_os_type":  "client",
 		"chat_version":  chatVersion,
+		"_time":         strconv.FormatInt(ts, 10),
+		"nonce":         nonce,
+		"hkey":          createHkey(apiPath, ts, nonce),
 	}
 }
 
@@ -53,7 +60,7 @@ func (d *HeyboxChat) request(ctx context.Context, apiPath string, body any, resu
 	resp, err := d.client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json;charset=utf-8").
-		SetQueryParams(d.queryParams()).
+		SetQueryParams(d.queryParams(apiPath)).
 		SetBody(body).
 		SetResult(&raw).
 		Post(apiBase + apiPath)
