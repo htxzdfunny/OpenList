@@ -3,7 +3,6 @@ package heybox_chat
 import (
 	"context"
 	"fmt"
-	"io"
 	stdpath "path"
 	"strings"
 	"sync"
@@ -201,22 +200,8 @@ func (d *HeyboxChat) Put(ctx context.Context, dstDir model.Obj, file model.FileS
 		return nil, errs.ObjectAlreadyExists
 	}
 
-	temp, err := file.CacheFullAndWriter(&up, nil)
+	seeker, size, err := loadSeekableUpload(file, &up)
 	if err != nil {
-		return nil, err
-	}
-	seeker, ok := temp.(io.ReadSeeker)
-	if !ok {
-		return nil, fmt.Errorf("cached upload is not seekable")
-	}
-	if _, err = seeker.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	size := file.GetSize()
-	if end, seekErr := seeker.Seek(0, io.SeekEnd); seekErr == nil && end > 0 {
-		size = end
-	}
-	if _, err = seeker.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 	if size > d.maxSize() {

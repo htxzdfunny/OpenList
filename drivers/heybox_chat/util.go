@@ -1,6 +1,7 @@
 package heybox_chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -12,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 )
 
 func joinPublicURL(host, key string) string {
@@ -207,6 +210,75 @@ func buildFileInfo(name, mime string, size int64, r io.ReadSeeker) fileInfo {
 		}
 	}
 	return info
+}
+
+func fileStreamerReader(file model.FileStreamer) io.Reader {
+	if fs, ok := file.(*stream.FileStream); ok {
+		return fs.Reader
+	}
+	return file
+}
+
+func seekerSize(seeker io.ReadSeeker) (int64, error) {
+	end, err := seeker.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = seeker.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	return end, nil
+}
+
+// Web uploads often report GetSize()==0. CacheFullAndWriter then caches 0 bytes
+// and info/v2 gets fsize=0, which heybox rejects as 非法的请求.
+func loadSeekableUpload(file model.FileStreamer, up *driver.UpdateProgress) (io.ReadSeeker, int64, error) {
+	if cached := file.GetFile(); cached != nil {
+		if _, err := cached.Seek(0, io.SeekStart); err != nil {
+			return nil, 0, err
+		}
+		size, err := seekerSize(cached)
+		if err != nil {
+			return nil, 0, err
+		}
+		if size <= 0 {
+			return nil, 0, fmt.Errorf("empty upload")
+		}
+		return cached, size, nil
+	}
+	if file.GetSize() <= 0 {
+		r := fileStreamerReader(file)
+		if r == nil {
+			return nil, 0, fmt.Errorf("empty upload")
+		}
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(data) == 0 {
+			return nil, 0, fmt.Errorf("empty upload")
+		}
+		return bytes.NewReader(data), int64(len(data)), nil
+	}
+	temp, err := file.CacheFullAndWriter(up, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	seeker, ok := temp.(io.ReadSeeker)
+	if !ok {
+		return nil, 0, fmt.Errorf("cached upload is not seekable")
+	}
+	size := file.GetSize()
+	if end, err := seeker.Seek(0, io.SeekEnd); err == nil && end > 0 {
+		size = end
+	}
+	if _, err = seeker.Seek(0, io.SeekStart); err != nil {
+		return nil, 0, err
+	}
+	if size <= 0 {
+		return nil, 0, fmt.Errorf("empty upload")
+	}
+	return seeker, size, nil
 }
 
 func (d *HeyboxChat) maxSize() int64 {
