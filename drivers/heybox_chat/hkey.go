@@ -18,7 +18,7 @@ func createNonce(ts int64) string {
 }
 
 func createHkey(path string, ts int64, nonce string) string {
-	return ov(path, ts+3, nonce)
+	return ov(path, ts+1, nonce)
 }
 
 func normalizeSignPath(path string) string {

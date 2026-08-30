@@ -50,6 +50,7 @@ func TestMarshalJSONString(t *testing.T) {
 		FSize:    123456,
 		Width:    1920,
 		Height:   1080,
+		Ext:      "png",
 	}}
 	got, err := marshalJSONString(raw)
 	if err != nil {
@@ -59,8 +60,17 @@ func TestMarshalJSONString(t *testing.T) {
 	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
 		t.Fatalf("result is not a JSON string of an array: %q err=%v", got, err)
 	}
-	if len(parsed) != 1 || parsed[0].Width != 1920 || parsed[0].FSize != 123456 {
+	if len(parsed) != 1 || parsed[0].Width != 1920 || parsed[0].FSize != 123456 || parsed[0].Ext != "png" {
 		t.Fatalf("unexpected payload: %q", got)
+	}
+}
+
+func TestFileExtKeepsJpeg(t *testing.T) {
+	if got := fileExt("photo.JPEG"); got != "jpeg" {
+		t.Fatalf("fileExt(photo.JPEG) = %q, want jpeg (official 7749 does not rewrite jpeg)", got)
+	}
+	if got := fileExt("a.PNG"); got != "png" {
+		t.Fatalf("fileExt(a.PNG) = %q", got)
 	}
 }
 

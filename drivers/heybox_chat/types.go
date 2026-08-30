@@ -38,6 +38,7 @@ type fileInfo struct {
 	FSize    int64  `json:"fsize"`
 	Width    int    `json:"width,omitempty"`
 	Height   int    `json:"height,omitempty"`
+	Ext      string `json:"ext,omitempty"`
 }
 
 type apiResponse struct {

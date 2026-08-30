@@ -29,8 +29,12 @@ func joinPublicURL(host, key string) string {
 	return strings.TrimRight(host, "/") + "/" + key
 }
 
+func fileExt(name string) string {
+	return strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
+}
+
 func normalizeExt(name string) string {
-	ext := strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
+	ext := fileExt(name)
 	if ext == "jpeg" {
 		return "jpg"
 	}
@@ -195,7 +199,7 @@ func readImageSize(r io.ReadSeeker) (int, int, bool) {
 
 func buildFileInfo(name, mime string, size int64, r io.ReadSeeker) fileInfo {
 	mime = guessMime(name, mime)
-	info := fileInfo{MimeType: mime, FSize: size}
+	info := fileInfo{MimeType: mime, FSize: size, Ext: fileExt(name)}
 	if strings.HasPrefix(mime, "image/") {
 		if w, h, ok := readImageSize(r); ok {
 			info.Width = w

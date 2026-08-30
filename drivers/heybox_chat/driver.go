@@ -18,9 +18,11 @@ import (
 type HeyboxChat struct {
 	model.Storage
 	Addition
-	client *resty.Client
-	root   *Node
-	mutex  sync.RWMutex
+	client   *resty.Client
+	root     *Node
+	mutex    sync.RWMutex
+	apiHost  string
+	deviceID string
 }
 
 func (d *HeyboxChat) Config() driver.Config {

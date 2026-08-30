@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -32,20 +34,79 @@ func (d *HeyboxChat) queryParams(apiPath string) map[string]string {
 	ts := time.Now().Unix()
 	nonce := createNonce(ts)
 	return map[string]string{
-		"heybox_id":     d.HeyboxID,
-		"pkey":          d.Pkey,
-		"client_type":   "heybox_chat",
-		"x_client_type": "pc",
-		"os_type":       "web",
-		"x_app":         "heybox_chat",
-		"version":       "999.0.4",
-		"web_version":   "1.0.0",
-		"chat_os_type":  "client",
-		"chat_version":  chatVersion,
-		"_time":         strconv.FormatInt(ts, 10),
-		"nonce":         nonce,
-		"hkey":          createHkey(apiPath, ts, nonce),
+		"heybox_id":        d.HeyboxID,
+		"pkey":             d.Pkey,
+		"client_type":      "heybox_chat",
+		"x_client_type":    "pc",
+		"os_type":          "web",
+		"x_os_type":        "Windows",
+		"device_info":      "Chrome",
+		"x_app":            "heybox_chat",
+		"version":          "999.0.4",
+		"web_version":      "1.0.0",
+		"chat_os_type":     "client",
+		"chat_version":     chatVersion,
+		"chat_exe_version": chatVersion,
+		"device_id":        d.deviceIDOrNew(),
+		"_time":            strconv.FormatInt(ts, 10),
+		"nonce":            nonce,
+		"hkey":             createHkey(apiPath, ts, nonce),
 	}
+}
+
+func (d *HeyboxChat) deviceIDOrNew() string {
+	if d.deviceID == "" {
+		d.deviceID = strings.ToUpper(uuid.NewString())
+	}
+	return d.deviceID
+}
+
+func (d *HeyboxChat) endpoint(apiPath string) string {
+	host := apiBase
+	if d.apiHost != "" {
+		host = strings.TrimRight(d.apiHost, "/")
+	}
+	return host + apiPath
+}
+
+func buildInfoForm(info fileInfo) (map[string]string, error) {
+	fileInfos, err := marshalJSONString([]fileInfo{info})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"file_infos": fileInfos,
+		"scope":      "chat",
+		"type":       "",
+		"source":     "",
+		"need_cache": "0",
+		"ext":        "",
+	}, nil
+}
+
+func buildTokenForm(info *uploadInfoResult, mime string) (map[string]string, error) {
+	keys, err := marshalJSONString(info.Keys)
+	if err != nil {
+		return nil, err
+	}
+	mimes, err := marshalJSONString([]string{mime})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"bucket":              info.Bucket,
+		"keys":                keys,
+		"mimetypes":           mimes,
+		"is_multipart_upload": "0",
+	}, nil
+}
+
+func buildCallbackForm(keys []string) (map[string]string, error) {
+	keysStr, err := marshalJSONString(keys)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"keys": keysStr}, nil
 }
 
 func (d *HeyboxChat) ensureClient() {
@@ -54,16 +115,17 @@ func (d *HeyboxChat) ensureClient() {
 	}
 }
 
-func (d *HeyboxChat) request(ctx context.Context, apiPath string, body any, result any) error {
+func (d *HeyboxChat) request(ctx context.Context, apiPath string, form map[string]string, result any) error {
 	d.ensureClient()
 	var raw apiResponse
 	resp, err := d.client.R().
 		SetContext(ctx).
-		SetHeader("Content-Type", "application/json;charset=utf-8").
+		SetHeader("Content-Type", "application/x-www-form-urlencoded;charset=utf-8").
+		SetCookie(&http.Cookie{Name: "user_pkey", Value: d.Pkey}).
 		SetQueryParams(d.queryParams(apiPath)).
-		SetBody(body).
+		SetFormData(form).
 		SetResult(&raw).
-		Post(apiBase + apiPath)
+		Post(d.endpoint(apiPath))
 	if err != nil {
 		return err
 	}
@@ -86,21 +148,13 @@ func (d *HeyboxChat) request(ctx context.Context, apiPath string, body any, resu
 	return nil
 }
 
-func (d *HeyboxChat) requestUploadInfo(ctx context.Context, info fileInfo, ext string) (*uploadInfoResult, error) {
-	fileInfos, err := marshalJSONString([]fileInfo{info})
+func (d *HeyboxChat) requestUploadInfo(ctx context.Context, info fileInfo) (*uploadInfoResult, error) {
+	form, err := buildInfoForm(info)
 	if err != nil {
 		return nil, err
 	}
-	body := base.Json{
-		"file_infos": fileInfos,
-		"scope":      "chat",
-		"need_cache": 0,
-	}
-	if ext != "" {
-		body["ext"] = ext
-	}
 	var out uploadInfoResult
-	if err := d.request(ctx, infoAPI, body, &out); err != nil {
+	if err := d.request(ctx, infoAPI, form, &out); err != nil {
 		return nil, err
 	}
 	if out.Bucket == "" || len(out.Keys) == 0 || out.Keys[0] == "" {
@@ -110,21 +164,12 @@ func (d *HeyboxChat) requestUploadInfo(ctx context.Context, info fileInfo, ext s
 }
 
 func (d *HeyboxChat) requestUploadToken(ctx context.Context, info *uploadInfoResult, mime string) (*uploadTokenResult, error) {
-	keys, err := marshalJSONString(info.Keys)
-	if err != nil {
-		return nil, err
-	}
-	mimes, err := marshalJSONString([]string{mime})
+	form, err := buildTokenForm(info, mime)
 	if err != nil {
 		return nil, err
 	}
 	var out uploadTokenResult
-	if err := d.request(ctx, tokenAPI, base.Json{
-		"bucket":              info.Bucket,
-		"keys":                keys,
-		"mimetypes":           mimes,
-		"is_multipart_upload": 0,
-	}, &out); err != nil {
+	if err := d.request(ctx, tokenAPI, form, &out); err != nil {
 		return nil, err
 	}
 	if out.Credentials.TmpSecretID == "" || out.Credentials.TmpSecretKey == "" || out.Credentials.SessionToken == "" {
@@ -134,11 +179,11 @@ func (d *HeyboxChat) requestUploadToken(ctx context.Context, info *uploadInfoRes
 }
 
 func (d *HeyboxChat) requestCallback(ctx context.Context, keys []string) error {
-	keysStr, err := marshalJSONString(keys)
+	form, err := buildCallbackForm(keys)
 	if err != nil {
 		return err
 	}
-	return d.request(ctx, callbackAPI, base.Json{"keys": keysStr}, nil)
+	return d.request(ctx, callbackAPI, form, nil)
 }
 
 func (d *HeyboxChat) putCOS(ctx context.Context, bucket, key, mime string, body io.Reader, size int64, cred uploadCredentials, up driver.UpdateProgress) error {
@@ -172,7 +217,7 @@ func (d *HeyboxChat) putCOS(ctx context.Context, bucket, key, mime string, body 
 
 func (d *HeyboxChat) uploadFile(ctx context.Context, name, mime string, size int64, body io.ReadSeeker, up driver.UpdateProgress) (publicURL, key, host string, err error) {
 	info := buildFileInfo(name, mime, size, body)
-	uploadInfo, err := d.requestUploadInfo(ctx, info, normalizeExt(name))
+	uploadInfo, err := d.requestUploadInfo(ctx, info)
 	if err != nil {
 		return "", "", "", err
 	}

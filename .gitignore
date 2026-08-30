@@ -34,3 +34,6 @@ output/
 
 .VSCodeCounter
 *.syso
+
+CHANGELOG.md
+MEMORY.md

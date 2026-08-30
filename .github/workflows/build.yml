@@ -11,57 +11,53 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        target:
-          - darwin-amd64
-          - darwin-arm64
-          - windows-amd64
-          - linux-arm64-musl
-          - linux-amd64-musl
-          - windows-arm64
-          - android-arm64
-    name: Build ${{ matrix.target }}
+    name: linux-amd64-musl
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - uses: benjlevesque/short-sha@dbe07338b37c456ce06d23409b35a56a7815eef4 # v4.0
-        id: short-sha
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.4"
+          cache: true
 
-      - name: Setup web
-        run: bash build.sh dev web
+      - name: Setup web and musl
+        run: |
+          set -euo pipefail
+          (
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends musl-tools
+          ) &
+          apt_pid=$!
+          bash build.sh dev web
+          wait "$apt_pid"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.5
-        with:
-          targets: ${{ matrix.target }}
-          flags: ${{ contains(matrix.target, '-musl') && '-ldflags=-linkmode external -extldflags ''-static -fpic''' || '-ldflags=' }}
-          static-link-for-musl: true
-          musl-target-format: $os-$musl-$arch
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          out-dir: build
-          x-flags: |
-            github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
-            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
-          output: openlist$ext
+        env:
+          CGO_ENABLED: "1"
+          CC: musl-gcc
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          built_at="$(date +'%F %T %z')"
+          git_commit="${GITHUB_SHA::7}"
+          go build -o build/openlist -tags=jsoniter \
+            -ldflags="-linkmode external -extldflags '-static -fpic' -w -s \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=${built_at}' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=${git_commit}' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=dev' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling'" \
+            .
 
       - name: Verify musl binary is static
-        if: contains(matrix.target, '-musl')
         run: |
-          set -e
+          set -euo pipefail
           if readelf -l build/openlist | grep -q "Requesting program interpreter"; then
             echo "Dynamic binary detected: build/openlist"
             readelf -l build/openlist | grep "Requesting program interpreter" || true
@@ -71,5 +67,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: openlist_${{ steps.short-sha.outputs.sha }}_${{ matrix.target }}
+          name: openlist-linux-amd64-musl
           path: build/*
+          compression-level: 0
